@@ -62,7 +62,7 @@ static void i2c_enable(struct i2c_regs *i2c, bool enable)
 		 * transfer supported by the driver (for 400KHz this is
 		 * 25us) as described in the DesignWare I2C databook.
 		 */
-		arch_usleep(25);
+		usleep(25);
 	} while (timeout--);
 
 	printf("timeout in %sabling I2C adapter\n", enable ? "en" : "dis");
@@ -85,7 +85,7 @@ static void i2c_disable(struct dw_i2c_dev *dw_i2c)
 		 * transfer supported by the driver (for 400KHz this is
 		 * 25us) as described in the DesignWare I2C databook.
 		 */
-		arch_usleep(25);
+		usleep(25);
 	} while (timeout--);
 
 	printf("timeout in disabling I2C adapter\n");
@@ -115,7 +115,7 @@ static int i2c_wait_for_bb(struct i2c_regs *i2c)
 	       !(mmio_read_32((uintptr_t)&i2c->ic_status) & IC_STATUS_TFE)) {
 
 		/* Evaluate timeout */
-		arch_usleep(5);
+		usleep(5);
         timeout++;
         if (timeout > 200) /* exceed 1 ms */
             return 1;
@@ -165,7 +165,7 @@ static int i2c_xfer_finish(struct i2c_regs *i2c)
 			break;
 		} else {
             timeout++;
-			arch_usleep(5);
+			usleep(5);
             if (timeout > I2C_STOPDET_TO * 100) {
 				printf("%s, tiemout\n", __func__);
 			    break;
@@ -226,7 +226,7 @@ int hal_i2c_read(uint8_t i2c_id, uint8_t dev, uint16_t addr, uint16_t alen, uint
 			active = 0;
 		}
 		else {
-            arch_usleep(5);
+            usleep(5);
             time_count++;
             if (time_count  >= I2C_BYTE_TO * 100)
 				return 1;
@@ -794,7 +794,7 @@ void hal_i2c_init(uint8_t i2c_id)
 	dw_i2c[i2c_id].use_interstop = 0;
 	dw_i2c[i2c_id].wait_irq = false;
 
-	request_irq(IC3_INTR, i2c_dw_isr, 0, "IC2_INTR int", &dw_i2c[i2c_id]);
+	request_irq(I2C3_INTR, i2c_dw_isr, 0, "IC2_INTR int", &dw_i2c[i2c_id]);
 
 	i2c_enable(i2c, false);
 	mmio_write_32((uintptr_t)&i2c->ic_con, (IC_CON_SD | IC_CON_SPD_FS | IC_CON_MM | IC_CON_RE));

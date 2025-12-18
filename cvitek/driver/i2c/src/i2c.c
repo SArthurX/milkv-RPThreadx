@@ -16,7 +16,7 @@ int i2c_read(uint8_t i2c_id, uint8_t dev, uint16_t addr, uint16_t alen, uint8_t 
 
 int i2c_set_interstop(uint8_t i2c_id, bool use_interstop)
 {
-	hal_i2c_set_interstop(i2c_id, use_interstop);
+	return hal_i2c_set_interstop(i2c_id, use_interstop);
 }
 
 int i2c_xfer(uint8_t i2c_id, struct i2c_msg msgs[], int num)

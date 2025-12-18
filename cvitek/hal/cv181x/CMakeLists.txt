@@ -20,7 +20,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${SAFETY_FLAGS}")
 set(build_list
 	uart
 	pinmux
-	# i2c
+	i2c
 )
 
 foreach(build_hal ${build_list})
