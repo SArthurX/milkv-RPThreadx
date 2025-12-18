@@ -65,6 +65,7 @@ set(DRIVER_UART_DIR ${CMAKE_DRIVER_DIR}/uart)
 set(DRIVER_SPINLOCK_DIR ${CMAKE_DRIVER_DIR}/spinlock)
 set(DRIVER_RTOS_CMDQU_DIR ${CMAKE_DRIVER_DIR}/rtos_cmdqu)
 set(DRIVER_I2C_DIR ${CMAKE_DRIVER_DIR}/i2c)
+set(DRIVER_SSD1306_DIR ${CMAKE_DRIVER_DIR}/ssd1306)
 
 set(driver_list
 	common
@@ -74,6 +75,7 @@ set(driver_list
 	gpio
 	rtos_cmdqu
 	i2c
+	ssd1306
 )
 else()
 set(DRIVER_BASE_DIR ${CMAKE_DRIVER_DIR}/base)

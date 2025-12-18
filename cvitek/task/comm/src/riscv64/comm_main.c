@@ -18,6 +18,10 @@
 /* Milk-V Duo */
 #include "milkv_duo_io.h"
 
+/* SSD1306 OLED Driver */
+#include "ssd1306_rtos.h"
+
+
 #define __DEBUG__
 #ifdef __DEBUG__
 #define debug_printf printf
@@ -199,12 +203,96 @@ void prvCmdQuRunTask(ULONG thread_input)
 				duo_led_control(0);
 			}
 			rtos_cmdq.param_ptr = DUO_LED_DONE;
-			rtos_cmdq.resv.valid.rtos_valid = 1;
-			rtos_cmdq.resv.valid.linux_valid = 0;
-			printf("recv cmd(%d) from C906B...send [0x%x] to C906B\n",
-			       rtos_cmdq.cmd_id, rtos_cmdq.param_ptr);
-			goto send_label;
-		default:
+		rtos_cmdq.resv.valid.rtos_valid = 1;
+		rtos_cmdq.resv.valid.linux_valid = 0;
+		printf("recv cmd(%d) from C906B...send [0x%x] to C906B\n",
+		       rtos_cmdq.cmd_id, rtos_cmdq.param_ptr);
+		goto send_label;
+		
+	case CMD_SSD1306_INIT: {
+		uint8_t i2c_bus = (rtos_cmdq.param_ptr >> 16) & 0xFF;
+		uint8_t lines = (rtos_cmdq.param_ptr >> 8) & 0xFF;
+		uint8_t cols = rtos_cmdq.param_ptr & 0xFF;
+		
+		printf("[SSD1306] Init: I2C%d, %dx%d\n", i2c_bus, cols, lines);
+		uint8_t result = ssd1306_rtos_init(i2c_bus, lines, cols);
+		
+		rtos_cmdq.param_ptr = result;
+		rtos_cmdq.resv.valid.rtos_valid = 1;
+		rtos_cmdq.resv.valid.linux_valid = 0;
+		goto send_label;
+	}
+	
+	case CMD_SSD1306_DEINIT:
+		printf("[SSD1306] Deinit\n");
+		rtos_cmdq.param_ptr = ssd1306_rtos_deinit();
+		rtos_cmdq.resv.valid.rtos_valid = 1;
+		rtos_cmdq.resv.valid.linux_valid = 0;
+		goto send_label;
+	
+	case CMD_SSD1306_CLEAR:
+		printf("[SSD1306] Clear screen\n");
+		rtos_cmdq.param_ptr = ssd1306_rtos_clear_screen();
+		rtos_cmdq.resv.valid.rtos_valid = 1;
+		rtos_cmdq.resv.valid.linux_valid = 0;
+		goto send_label;
+	
+	case CMD_SSD1306_SET_CURSOR: {
+		uint8_t x = (rtos_cmdq.param_ptr >> 8) & 0xFF;
+		uint8_t y = rtos_cmdq.param_ptr & 0xFF;
+		
+		printf("[SSD1306] Set cursor: (%d, %d)\n", x, y);
+		rtos_cmdq.param_ptr = ssd1306_rtos_set_cursor(x, y);
+		rtos_cmdq.resv.valid.rtos_valid = 1;
+		rtos_cmdq.resv.valid.linux_valid = 0;
+		goto send_label;
+	}
+	
+	case CMD_SSD1306_WRITE_STRING: {
+		// param_ptr points to shared memory with string data
+		typedef struct {
+			uint8_t font_size;
+			uint8_t x;
+			uint8_t y;
+			char text[128];
+		} string_data_t;
+		
+		string_data_t* str_data = (string_data_t*)rtos_cmdq.param_ptr;
+		printf("[SSD1306] Write string at (%d,%d): %s\n", 
+		       str_data->x, str_data->y, str_data->text);
+		
+		ssd1306_rtos_set_cursor(str_data->x, str_data->y);
+		uint8_t result = ssd1306_rtos_write_string(str_data->font_size, str_data->text);
+		
+		rtos_cmdq.param_ptr = result;
+		rtos_cmdq.resv.valid.rtos_valid = 1;
+		rtos_cmdq.resv.valid.linux_valid = 0;
+		goto send_label;
+	}
+	
+	case CMD_SSD1306_DISPLAY_ONOFF:
+		printf("[SSD1306] Display %s\n", rtos_cmdq.param_ptr ? "ON" : "OFF");
+		rtos_cmdq.param_ptr = ssd1306_rtos_display_onoff(rtos_cmdq.param_ptr);
+		rtos_cmdq.resv.valid.rtos_valid = 1;
+		rtos_cmdq.resv.valid.linux_valid = 0;
+		goto send_label;
+	
+	case CMD_SSD1306_UPDATE_DISPLAY: {
+		// param_ptr points to shared memory with display data
+		ssd1306_shared_data_t* display_data = (ssd1306_shared_data_t*)rtos_cmdq.param_ptr;
+		
+		printf("[SSD1306] Update display: %u faces, FPS=%.1f\n",
+		       (unsigned int)display_data->face_count, display_data->fps);
+		
+		uint8_t result = ssd1306_rtos_update_display(display_data);
+		
+		rtos_cmdq.param_ptr = result;
+		rtos_cmdq.resv.valid.rtos_valid = 1;
+		rtos_cmdq.resv.valid.linux_valid = 0;
+		goto send_label;
+	}
+	
+	default:
 		send_label:
 			/* used to send command to linux*/
 			rtos_cmdqu_t = (cmdqu_t *)mailbox_context;

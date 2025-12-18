@@ -6,6 +6,7 @@ include_directories(${CMAKE_INSTALL_INC_PREFIX}/common)
 include_directories(${CMAKE_INSTALL_INC_PREFIX}/kernel)
 include_directories(${CMAKE_INSTALL_INC_PREFIX}/driver/spinlock)
 include_directories(${CMAKE_INSTALL_INC_PREFIX}/driver/rtos_cmdqu)
+include_directories(${CMAKE_INSTALL_INC_PREFIX}/driver/ssd1306)
 include_directories(${CMAKE_INSTALL_INC_PREFIX}/hal/config)
 
 add_library(comm STATIC ${_SOURCES})
