@@ -18,7 +18,7 @@ typedef struct {
 
 #define RTOS_CMDQU_SEND _IOW('r', 1, rtos_cmdqu_t)
 
-#define CMD_DUO_LED 0x13
+#define CMD_DUO_LED 0x10
 
 int main(int argc, char *argv[]) {
   int fd;
@@ -27,7 +27,7 @@ int main(int argc, char *argv[]) {
 
   if (argc != 2) {
     printf("Usage: %s <0|1>\n", argv[0]);
-    printf("  2: LED ON\n");
+    printf("  1: LED ON\n");
     printf("  0: LED OFF\n");
     return -1;
   }
