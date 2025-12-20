@@ -794,7 +794,7 @@ void hal_i2c_init(uint8_t i2c_id)
 	dw_i2c[i2c_id].use_interstop = 0;
 	dw_i2c[i2c_id].wait_irq = false;
 
-	request_irq(I2C3_INTR, i2c_dw_isr, 0, "IC2_INTR int", &dw_i2c[i2c_id]);
+	request_irq(I2C1_INTR, i2c_dw_isr, 0, "IC2_INTR int", &dw_i2c[i2c_id]);
 
 	i2c_enable(i2c, false);
 	mmio_write_32((uintptr_t)&i2c->ic_con, (IC_CON_SD | IC_CON_SPD_FS | IC_CON_MM | IC_CON_RE));
