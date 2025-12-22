@@ -109,23 +109,6 @@ void tx_application_define(void *first_unused_memory)
 	ret = tx_queue_create(&mailbox_queue, "mailbox_queue", sizeof(cmdqu_t), pointer, DEMO_QUEUE_SIZE*sizeof(cmdqu_t));
 	IS_TX_ERROR(ret);
 
-	/* Allocate the stack for thread 0.  */
-	ret = tx_byte_allocate(&byte_pool_0, (VOID **)&pointer, DEMO_STACK_SIZE, TX_NO_WAIT);
-
-	IS_TX_ERROR(ret);
-
-	ret = tx_thread_create(&thread_0, "thread 0", thread_0_entry, 0, pointer,
-			 DEMO_STACK_SIZE, 6, 6, 10,
-			 TX_AUTO_START);
-	IS_TX_ERROR(ret);
-	
-	ret = tx_byte_allocate(&byte_pool_0, (VOID **)&pointer, DEMO_STACK_SIZE, TX_NO_WAIT);
-	IS_TX_ERROR(ret);
-
-	ret = tx_thread_create(&thread_1, "thread 1", thread_1_entry, 99, pointer,
-			 DEMO_STACK_SIZE, 6, 6, 10,
-			 TX_AUTO_START);
-	IS_TX_ERROR(ret);
 
 	ret = tx_byte_allocate(&byte_pool_0, (VOID **)&pointer, DEMO_STACK_SIZE, TX_NO_WAIT);
 	IS_TX_ERROR(ret);
@@ -135,34 +118,6 @@ void tx_application_define(void *first_unused_memory)
 	IS_TX_ERROR(ret);
 }
 
-void thread_0_entry(ULONG thread_input)
-{
-	(void)thread_input;
-
-	//UINT status;
-
-	printf("thread 0 in\n");
-	double result = 0;
-	while (1) {
-		printf("threadx 0 running: %d\n", thread_0_counter++);
-
-		result = result + thread_0_counter * 1.5;
-		printf("float cal: %d\n", (int)result);
-
-		tx_thread_sleep(TX_MS_TO_TICKS(4000));  // 5ms per tick(200Hz)
-	}
-}
-
-void thread_1_entry(ULONG thread_input)
-{
-	(void)thread_input;
-
-	printf("thread 1 in\n");
-	while (1) {
-		printf("threadx 1 running: %d\n", thread_1_counter++);
-		tx_thread_sleep(TX_MS_TO_TICKS(8000));  
-	}
-}
 
 void prvCmdQuRunTask(ULONG thread_input)
 {
