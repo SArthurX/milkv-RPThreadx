@@ -76,6 +76,7 @@ set(driver_list
 	rtos_cmdqu
 	i2c
 	ssd1306
+	rpmsg-lite
 )
 else()
 set(DRIVER_BASE_DIR ${CMAKE_DRIVER_DIR}/base)

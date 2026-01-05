@@ -22,12 +22,22 @@
 #include "tx_api.h"
 #include "tx_event_flags.h"
 #include "rpmsg_platform.h"
-#include "fsl_common.h"
-#include "fsl_component_mem_manager.h"
+// #include "fsl_common.h"
+// #include "fsl_component_mem_manager.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>  /* For INT32_MAX */
 #include "virtqueue.h"
+
+#ifndef SDK_MALLOC
+#define SDK_MALLOC  malloc
+#endif
+#ifndef SDK_FREE
+#define SDK_FREE    free
+#endif
+
+#define MEM_BARRIER() __asm__ __volatile__("fence iorw, iorw" ::: "memory")
+
 
 static int32_t env_init_counter         = 0;
 static TX_SEMAPHORE env_sema            = {0};
@@ -212,6 +222,29 @@ int32_t env_deinit(void)
     }
 }
 
+// /*!
+//  * env_allocate_memory - implementation
+//  *
+//  * @param size
+//  */
+// void *env_allocate_memory(uint32_t size)
+// {
+//     return (MEM_BufferAlloc(size));
+// }
+
+// /*!
+//  * env_free_memory - implementation
+//  *
+//  * @param ptr
+//  */
+// void env_free_memory(void *ptr)
+// {
+//     if (ptr != ((void *)0))
+//     {
+//         MEM_BufferFree(ptr);
+//     }
+// }
+
 /*!
  * env_allocate_memory - implementation
  *
@@ -219,7 +252,7 @@ int32_t env_deinit(void)
  */
 void *env_allocate_memory(uint32_t size)
 {
-    return (MEM_BufferAlloc(size));
+    return SDK_MALLOC(size);
 }
 
 /*!
@@ -231,7 +264,7 @@ void env_free_memory(void *ptr)
 {
     if (ptr != ((void *)0))
     {
-        MEM_BufferFree(ptr);
+        SDK_FREE(ptr);
     }
 }
 
