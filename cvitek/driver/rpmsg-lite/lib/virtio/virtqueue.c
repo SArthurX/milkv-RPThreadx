@@ -422,6 +422,9 @@ void *virtqueue_get_available_buffer(struct virtqueue *vq, uint16_t *avail_idx, 
 
     env_rmb();
 
+    /* Invalidate descriptor before reading*/
+    VQUEUE_INVALIDATE(&vq->vq_ring.desc[*avail_idx], sizeof(vq->vq_ring.desc[*avail_idx]));
+
 #if defined(RL_USE_ENVIRONMENT_CONTEXT) && (RL_USE_ENVIRONMENT_CONTEXT == 1)
     buffer = env_map_patova(vq->env, ((uint32_t)(vq->vq_ring.desc[*avail_idx].addr)));
 #else
