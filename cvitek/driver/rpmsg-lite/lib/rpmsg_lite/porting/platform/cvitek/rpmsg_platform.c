@@ -42,7 +42,6 @@ int32_t platform_init(void)
 
 int32_t platform_deinit(void)
 {
-    /* 釋放互斥鎖 */
     if (platform_lock) {
         env_delete_mutex(platform_lock);
         platform_lock = NULL;
