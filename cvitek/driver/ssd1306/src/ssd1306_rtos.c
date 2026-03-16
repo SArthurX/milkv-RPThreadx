@@ -1,8 +1,8 @@
+#include <stdint.h>
+#include <string.h>
 #include "ssd1306_rtos.h"
 #include "i2c.h"
 #include "printf.h"
-#include <stdint.h>
-#include <string.h>
 #include "font.h"
 
 /* Global state */
@@ -19,12 +19,14 @@ static uint8_t tx_buffer[256];
 /* Helper function to send command */
 static uint8_t send_command(const uint8_t* cmd, uint16_t len)
 {
-    if (!g_initialized) return 1;
-    
     tx_buffer[0] = SSD1306_COMM_CONTROL_BYTE;
     memcpy(tx_buffer + 1, cmd, len);
     
-    return i2c_write(g_i2c_bus, SSD1306_I2C_ADDR, 0, 0, tx_buffer, len + 1);
+    uint8_t result = i2c_write(g_i2c_bus, SSD1306_I2C_ADDR, 0, 0, tx_buffer, len + 1);
+    if (result != 0) {
+        printf("[SSD1306] *** I2C write FAILED, result=%d ***\n", result);
+    }
+    return result;
 }
 
 /* Helper function to send data */
@@ -35,7 +37,15 @@ static uint8_t send_data(const uint8_t* data, uint16_t len)
     tx_buffer[0] = SSD1306_DATA_CONTROL_BYTE;
     memcpy(tx_buffer + 1, data, len);
     
-    return i2c_write(g_i2c_bus, SSD1306_I2C_ADDR, 0, 0, tx_buffer, len + 1);
+    uint8_t result = i2c_write(g_i2c_bus, SSD1306_I2C_ADDR, 0, 0, tx_buffer, len + 1);
+    
+    /* Add small delay after data transfer to avoid overwhelming I2C */
+    if (result == 0 && len > 32) {
+        /* Delay ~1ms for every 32 bytes to give I2C time to process */
+        for (volatile int i = 0; i < (len / 32) * 1000; i++);
+    }
+    
+    return result;
 }
 
 uint8_t ssd1306_rtos_init(uint8_t i2c_bus, uint8_t lines, uint8_t columns)
@@ -98,12 +108,18 @@ uint8_t ssd1306_rtos_clear_screen(void)
     if (!g_initialized) return 1;
     
     uint8_t result = 0;
-    uint8_t zero_data[128];
+    /* Reduce chunk size to 32 bytes to avoid I2C timeout */
+    uint8_t zero_data[32];
     memset(zero_data, 0, sizeof(zero_data));
     
     for (uint8_t page = 0; page < (g_max_lines / 8); page++) {
         ssd1306_rtos_set_cursor(0, page);
-        result |= send_data(zero_data, g_max_columns);
+        /* Send in smaller chunks to avoid I2C FIFO overflow */
+        for (uint8_t col = 0; col < g_max_columns; col += 32) {
+            uint8_t bytes_to_send = (col + 32 > g_max_columns) ? 
+                                    (g_max_columns - col) : 32;
+            result |= send_data(zero_data, bytes_to_send);
+        }
     }
     
     g_current_x = 0;
@@ -211,14 +227,17 @@ uint8_t ssd1306_rtos_flush_buffer(const uint8_t* frame_buffer, uint16_t size)
     ssd1306_rtos_set_col(0, g_max_columns - 1);
     ssd1306_rtos_set_page(0, (g_max_lines / 8) - 1);
     
-    /* Transfer frame buffer in chunks */
+    /* Transfer frame buffer in smaller chunks to avoid I2C timeout */
     uint8_t result = 0;
-    const uint16_t chunk_size = 128;
+    const uint16_t chunk_size = 32;  /* Reduced from 128 to 32 */
     
     for (uint16_t i = 0; i < size; i += chunk_size) {
         uint16_t bytes_to_send = (i + chunk_size > size) ? (size - i) : chunk_size;
         result |= send_data(frame_buffer + i, bytes_to_send);
     }
+    
+    /* Restore Page mode for subsequent write_string() calls */
+    ssd1306_rtos_set_mem_mode(SSD1306_PAGE_MODE);
     
     return result;
 }
@@ -227,21 +246,5 @@ uint8_t ssd1306_rtos_update_display(const ssd1306_shared_data_t* data)
 {
     if (!g_initialized || !data) return 1;
     
-    uint8_t result = 0;
-    
-    /* Flush frame buffer */
-    result |= ssd1306_rtos_flush_buffer(data->frame_buffer, 1024);
-    
-    /* Display text info */
-    char info[32];
-    
-    ssd1306_rtos_set_cursor(0, 0);
-    snprintf(info, sizeof(info), "Faces:%u", (unsigned int)data->face_count);
-    result |= ssd1306_rtos_write_string(SSD1306_FONT_SMALL, info);
-    
-    ssd1306_rtos_set_cursor(0, 1);
-    snprintf(info, sizeof(info), "FPS:%.1f", data->fps);
-    result |= ssd1306_rtos_write_string(SSD1306_FONT_SMALL, info);
-    
-    return result;
+    return ssd1306_rtos_flush_buffer(data->frame_buffer, 1024);
 }
