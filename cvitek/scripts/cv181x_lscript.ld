@@ -24,6 +24,7 @@ _EL2_STACK_SIZE = DEFINED(_EL2_STACK_SIZE) ? _EL2_STACK_SIZE : 1024;
 MEMORY
 {
    psu_ddr_0_MEM_0 : ORIGIN = CVIMMAP_FREERTOS_ADDR , LENGTH = CVIMMAP_FREERTOS_SIZE
+   RPMSG_RSC_MEM : ORIGIN = CVIMMAP_RESOURCE_TABLE_ADDR, LENGTH = 4096
 }
 
 /* Specify the default entry point to the program */
@@ -35,6 +36,12 @@ ENTRY(_start)
 
 SECTIONS
 {
+   .resource_table CVIMMAP_RESOURCE_TABLE_ADDR : {
+      __resource_table_start = .;
+      KEEP (*(.resource_table))
+      __resource_table_end = .;
+   } > RPMSG_RSC_MEM
+
 .text : {
    KEEP (*(.vectors))
    *(.boot)

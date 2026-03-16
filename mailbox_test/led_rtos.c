@@ -17,6 +17,7 @@ typedef struct {
 } rtos_cmdqu_t;
 
 #define RTOS_CMDQU_SEND _IOW('r', 1, rtos_cmdqu_t)
+#define RTOS_CMDQU_SEND_WAIT _IOW('r', 4, rtos_cmdqu_t)
 
 #define CMD_DUO_LED 0x10
 
@@ -43,20 +44,20 @@ int main(int argc, char *argv[]) {
   memset(&cmd, 0, sizeof(cmd));
   cmd.ip_id = 0;
   cmd.cmd_id = CMD_DUO_LED;
-  cmd.block = 0;
+  cmd.block = 1;
   cmd.param_ptr = state;
 
-  printf("Sending CMD: ID=%d, Param=%d to RTOS...\n", cmd.cmd_id,
-         cmd.param_ptr);
+    printf("Sending CMD(wait): ID=%d, Param=%d to RTOS...\n", cmd.cmd_id,
+      cmd.param_ptr);
 
-  ret = ioctl(fd, RTOS_CMDQU_SEND, &cmd);
+    ret = ioctl(fd, RTOS_CMDQU_SEND_WAIT, &cmd);
   if (ret < 0) {
     perror("IOCTL failed");
     close(fd);
     return -1;
   }
 
-  printf("Command sent successfully.\n");
+    printf("RTOS replied: cmd_id=%d, param_ptr=%d\n", cmd.cmd_id, cmd.param_ptr);
 
   close(fd);
   return 0;

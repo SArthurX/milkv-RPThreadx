@@ -142,7 +142,7 @@
 //! Enable this option in RPMsg-Lite to Linux configuration to allow unblocking
 //! of the Linux blocking send.
 //! The default value is 0 (RPMsg-Lite to RPMsg-Lite communication).
-#define RL_ALLOW_CONSUMED_BUFFERS_NOTIFICATION (0)
+#define RL_ALLOW_CONSUMED_BUFFERS_NOTIFICATION (1)
 
 //! @def RL_ASSERT
 //!

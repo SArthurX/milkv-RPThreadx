@@ -445,9 +445,16 @@ void env_delete_mutex(void *lock)
  */
 void env_lock_mutex(void *lock)
 {
+    env_print("[env_lock_mutex] ENTRY: lock=%p in_isr=%d\n", lock, env_in_isr());
     if (env_in_isr() == 0)
     {
-        (void)tx_semaphore_get((TX_SEMAPHORE *)lock, TX_WAIT_FOREVER);
+        env_print("[env_lock_mutex] Calling tx_semaphore_get...\n");
+        UINT status = tx_semaphore_get((TX_SEMAPHORE *)lock, TX_WAIT_FOREVER);
+        env_print("[env_lock_mutex] tx_semaphore_get returned: status=%d\n", (int)status);
+    }
+    else
+    {
+        env_print("[env_lock_mutex] Skipped (in ISR)\n");
     }
 }
 
@@ -767,21 +774,34 @@ int32_t env_put_queue(void *queue, void *msg, uintptr_t timeout_ms)
 
 int32_t env_get_queue(void *queue, void *msg, uintptr_t timeout_ms)
 {
+    UINT status;
+    
     if (RL_BLOCK == timeout_ms)
     {
-        if (TX_SUCCESS == tx_queue_receive((TX_QUEUE *)(queue), msg, TX_WAIT_FOREVER))
+        status = tx_queue_receive((TX_QUEUE *)(queue), msg, TX_WAIT_FOREVER);
+        if (TX_SUCCESS == status)
         {
             return 1;
+        }
+        else
+        {
+            env_print("[env_get_queue] ERROR: tx_queue_receive failed with status=%d (timeout=FOREVER)\r\n", (int)status);
+            return 0;
         }
     }
     else
     {
-        if (TX_SUCCESS == tx_queue_receive((TX_QUEUE *)(queue), msg, ((timeout_ms * TX_TIMER_TICKS_PER_SECOND) / 1000)))
+        status = tx_queue_receive((TX_QUEUE *)(queue), msg, ((timeout_ms * TX_TIMER_TICKS_PER_SECOND) / 1000));
+        if (TX_SUCCESS == status)
         {
             return 1;
         }
+        else
+        {
+            /* Normal timeout, don't print error */
+            return 0;
+        }
     }
-    return 0;
 }
 
 /*!

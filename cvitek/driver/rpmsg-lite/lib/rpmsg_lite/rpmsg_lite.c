@@ -700,21 +700,45 @@ static int32_t rpmsg_lite_format_message(struct rpmsg_lite_instance *rpmsg_lite_
     uint32_t tick_count = 0U;
     uint32_t buff_len;
 
+    env_print("[format_message] ENTRY: src=%d dst=%d size=%d timeout=%d\r\n", 
+              (int)src, (int)dst, (int)size, (int)timeout);
+    env_print("[format_message] rpmsg_lite_dev=%p\r\n", rpmsg_lite_dev);
+    env_print("[format_message] rpmsg_lite_dev->lock=%p\r\n", rpmsg_lite_dev->lock);
+
     if (data == RL_NULL)
     {
+        env_print("[format_message] ERROR: data is NULL\r\n");
         return RL_ERR_PARAM;
     }
 
+    env_print("[format_message] Checking link_state=%d\r\n", rpmsg_lite_dev->link_state);
+    
     if (rpmsg_lite_dev->link_state != RL_TRUE)
     {
+        env_print("[format_message] ERROR: link not ready\r\n");
         return RL_NOT_READY;
     }
 
+    env_print("[format_message] About to lock mutex...\r\n");
+    
     /* Lock the device to enable exclusive access to virtqueues */
     env_lock_mutex(rpmsg_lite_dev->lock);
+    
+    env_print("[format_message] Mutex locked, calling vq_tx_alloc...\r\n");
     /* Get rpmsg buffer for sending message. */
     buffer = rpmsg_lite_dev->vq_ops->vq_tx_alloc(rpmsg_lite_dev->tvq, &buff_len, &idx);
     env_unlock_mutex(rpmsg_lite_dev->lock);
+    
+    /* Debug: print buffer allocation result */
+    if (buffer == RL_NULL)
+    {
+        env_print("[rpmsg_lite_send] First TX alloc failed, will retry...\r\n");
+    }
+    else
+    {
+        env_print("[rpmsg_lite_send] TX buffer allocated: %p, len=%d, idx=%d\r\n", 
+                  buffer, (int)buff_len, idx);
+    }
 
     if ((buffer == RL_NULL) && (timeout == RL_FALSE))
     {
@@ -724,10 +748,32 @@ static int32_t rpmsg_lite_format_message(struct rpmsg_lite_instance *rpmsg_lite_
     while (buffer == RL_NULL)
     {
         env_sleep_msec(RL_MS_PER_INTERVAL);
+        
+        /* CRITICAL: Force process TX VirtQueue to reclaim used buffers
+         * This handles the case where Linux consumed TX buffers but
+         * the notification didn't arrive or wasn't processed */
+        if (rpmsg_lite_dev->tvq != RL_NULL)
+        {
+            /* Check if there are buffers in used ring that haven't been reclaimed */
+            virtqueue_notification(rpmsg_lite_dev->tvq);
+        }
+        
+        /* Force memory barrier and cache invalidate before retry */
+        env_rmb();
+        
         env_lock_mutex(rpmsg_lite_dev->lock);
         buffer = rpmsg_lite_dev->vq_ops->vq_tx_alloc(rpmsg_lite_dev->tvq, &buff_len, &idx);
         env_unlock_mutex(rpmsg_lite_dev->lock);
+        
         tick_count += (uint32_t)RL_MS_PER_INTERVAL;
+        
+        /* Debug: print wait status every 100ms */
+        if ((tick_count % 100U) == 0U)
+        {
+            env_print("[rpmsg_lite_send] Waiting for TX buffer... tick=%d timeout=%d\r\n", 
+                     (int)tick_count, (int)timeout);
+        }
+        
         if ((tick_count >= timeout) && (buffer == RL_NULL))
         {
             return RL_ERR_NO_MEM;
@@ -762,17 +808,29 @@ int32_t rpmsg_lite_send(struct rpmsg_lite_instance *rpmsg_lite_dev,
                         uint32_t size,
                         uintptr_t timeout)
 {
-    if (ept == RL_NULL)
+// 修正後的 Debug 列印
+    env_print("[rpmsg_lite_send] ENTRY: dst=%d size=%d timeout=%d\r\n", 
+              (int)dst, (int)size, (int)timeout);
+    
+    // 修正判斷方式：直接檢查 ept 指標是否為 NULL
+    if (ept == NULL) 
     {
+        env_print("[rpmsg_lite_send] ERROR: ept is NULL\r\n");
         return RL_ERR_PARAM;
     }
 
-    if (rpmsg_lite_dev == RL_NULL)
+    if (rpmsg_lite_dev == NULL)
     {
+        env_print("[rpmsg_lite_send] ERROR: rpmsg_lite_dev is NULL\r\n");
         return RL_ERR_PARAM;
     }
 
-    // FIXME : may be just copy the data size equal to buffer length and Tx it.
+    // 列印參數狀態
+    env_print("[rpmsg_lite_send] Parameters: dev=%p ept=%p ept_addr=%d\r\n",
+              rpmsg_lite_dev, ept, ept->addr);
+
+    env_print("[rpmsg_lite_send] Checking buffer size...\r\n");
+
 #if defined(RL_ALLOW_CUSTOM_SHMEM_CONFIG) && (RL_ALLOW_CUSTOM_SHMEM_CONFIG == 1)
     rpmsg_platform_shmem_config_t shmem_config;
     (void)platform_get_custom_shmem_config(rpmsg_lite_dev->link_id, &shmem_config);
@@ -781,6 +839,7 @@ int32_t rpmsg_lite_send(struct rpmsg_lite_instance *rpmsg_lite_dev,
     if (size > (uint32_t)RL_BUFFER_PAYLOAD_SIZE)
 #endif /* defined(RL_ALLOW_CUSTOM_SHMEM_CONFIG) && (RL_ALLOW_CUSTOM_SHMEM_CONFIG == 1) */
     {
+        env_print("[rpmsg_lite_send] ERROR: buffer size too large\r\n");
         return RL_ERR_BUFF_SIZE;
     }
 

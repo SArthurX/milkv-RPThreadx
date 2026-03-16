@@ -32,6 +32,7 @@
  */
 #include "rpmsg_lite.h"
 #include "rpmsg_queue.h"
+#include "printf.h"
 
 int32_t rpmsg_queue_rx_cb(void *payload, uint32_t payload_len, uint32_t src, void *priv)
 {
@@ -43,13 +44,17 @@ int32_t rpmsg_queue_rx_cb(void *payload, uint32_t payload_len, uint32_t src, voi
     msg.len  = payload_len;
     msg.src  = src;
 
+    printf("[rpmsg_queue] rx_cb: payload=%p len=%d src=0x%x\n", payload, payload_len, src);
+
     /* if message is successfully added into queue then hold rpmsg buffer */
     if (0 != env_put_queue(priv, &msg, 0))
     {
+        printf("[rpmsg_queue] rx_cb: put_queue SUCCESS, returning RL_HOLD\n");
         /* hold the rx buffer */
         return RL_HOLD;
     }
 
+    printf("[rpmsg_queue] rx_cb: put_queue FAILED! returning RL_RELEASE\n");
     return RL_RELEASE;
 }
 

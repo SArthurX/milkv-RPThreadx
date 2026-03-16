@@ -284,7 +284,13 @@ void *virtqueue_get_buffer(struct virtqueue *vq, uint32_t *len, uint16_t *idx)
     struct vring_used_elem *uep;
     uint16_t used_idx, desc_idx;
 
-    /* Invalidate used->idx before it is read */
+    /* Force memory barrier before reading shared memory */
+    env_rmb();
+    
+    /* CRITICAL: Invalidate entire used ring structure to prevent reading stale cache */
+    VQUEUE_INVALIDATE(vq->vq_ring.used, sizeof(struct vring_used));
+    
+    /* Also invalidate idx specifically (redundant but ensures correctness) */
     VQUEUE_INVALIDATE(&vq->vq_ring.used->idx, sizeof(vq->vq_ring.used->idx));
 
     if ((vq == VQ_NULL) || (vq->vq_used_cons_idx == vq->vq_ring.used->idx))
@@ -406,8 +412,14 @@ void *virtqueue_get_available_buffer(struct virtqueue *vq, uint16_t *avail_idx, 
 
     /* Invalidate avail->idx before it is read */
     VQUEUE_INVALIDATE(&vq->vq_ring.avail->idx, sizeof(vq->vq_ring.avail->idx));
+    
+    /* Debug: print avail ring state */
+    env_print("[VQ] get_avail_buf: vq_available_idx=%d avail->idx=%d\r\n",
+              vq->vq_available_idx, vq->vq_ring.avail->idx);
+    
     if (vq->vq_available_idx == vq->vq_ring.avail->idx)
     {
+        env_print("[VQ] get_avail_buf: NO BUFFER AVAILABLE!\r\n");
         return (VQ_NULL);
     }
 
@@ -432,6 +444,9 @@ void *virtqueue_get_available_buffer(struct virtqueue *vq, uint16_t *avail_idx, 
 #endif
     *len = vq->vq_ring.desc[*avail_idx].len;
 
+    env_print("[VQ] get_avail_buf: SUCCESS! head_idx=%d desc_idx=%d addr=0x%08x len=%d buffer=%p\r\n",
+              head_idx, *avail_idx, (uint32_t)(vq->vq_ring.desc[*avail_idx].addr), *len, buffer);
+
     VQUEUE_IDLE(vq, avail_read);
 
     return (buffer);
@@ -450,12 +465,18 @@ int32_t virtqueue_add_consumed_buffer(struct virtqueue *vq, uint16_t head_idx, u
 {
     if (head_idx > vq->vq_nentries)
     {
+        env_print("[VQ] add_consumed: ERROR head_idx=%d > nentries=%d\r\n", head_idx, vq->vq_nentries);
         return (ERROR_VRING_NO_BUFF);
     }
+
+    env_print("[VQ] add_consumed: head_idx=%d len=%d used->idx=%d\r\n", 
+              head_idx, len, vq->vq_ring.used->idx);
 
     VQUEUE_BUSY(vq, used_write);
     vq_ring_update_used(vq, head_idx, len);
     VQUEUE_IDLE(vq, used_write);
+
+    env_print("[VQ] add_consumed: DONE, new used->idx=%d\r\n", vq->vq_ring.used->idx);
 
     return (VQUEUE_SUCCESS);
 }
@@ -880,7 +901,13 @@ static int32_t vq_ring_must_notify_host(struct virtqueue *vq)
     }
     /* GCOVR_EXCL_STOP */
 
-    /* Invalidate flags before read */
+    /* Force memory barrier before reading */
+    env_rmb();
+    
+    /* Invalidate entire used ring to prevent reading stale flags */
+    VQUEUE_INVALIDATE(vq->vq_ring.used, sizeof(struct vring_used));
+    
+    /* Invalidate flags before read (redundant but explicit) */
     VQUEUE_INVALIDATE(&vq->vq_ring.used->flags, sizeof(vq->vq_ring.used->flags));
     return (((vq->vq_ring.used->flags & ((uint16_t)VRING_USED_F_NO_NOTIFY)) == 0U) ? 1 : 0);
 }

@@ -46,6 +46,12 @@ volatile unsigned long *mailbox_context; // mailbox buffer context is 64 Bytess
 
 static struct rpmsg_lite_instance g_rpmsg_ctxt;      /* RPMsg instance context */
 static struct rpmsg_lite_ept_static_context g_ept_ctxt;  /* Endpoint context */
+static  rpmsg_static_queue_ctxt g_queue_ctxt;   /* Queue context */
+
+/* Global handles to prevent stack corruption */
+static struct rpmsg_lite_instance *g_rpmsg_inst = NULL;
+static struct rpmsg_lite_endpoint *g_rpmsg_ept = NULL;
+static rpmsg_queue_handle g_rpmsg_queue = NULL;
 
 /* 
  * Size: 2 * RL_BUFFER_COUNT * sizeof(rpmsg_queue_rx_cb_data_t)
@@ -53,10 +59,8 @@ static struct rpmsg_lite_ept_static_context g_ept_ctxt;  /* Endpoint context */
  * 2 * 64 * 12 = 1536 bytes
  */
 static uint8_t g_queue_storage[2 * RPMSG_BUFFER_COUNT * sizeof(rpmsg_queue_rx_cb_data_t)] __attribute__((aligned(4)));
-static rpmsg_static_queue_ctxt g_queue_ctxt;
 
-/* RPMsg global instance for ISR access */
-static struct rpmsg_lite_instance *g_rpmsg_inst = NULL;
+
 static volatile int g_early_kick_received = 0;  /* Flag: Linux kick before RPMsg init */
 
 /* 
@@ -142,7 +146,7 @@ int comm_mailbox_send_rpmsg_kick(uint32_t vq_id)
 		return -1;
 	}
 	
-	printf("[comm_mailbox] ✅ Sent RPMsg kick: vq_id=%d, slot=%d\n", (int)vq_id, valid);
+	printf("[comm_mailbox] Sent RPMsg kick: vq_id=%d, slot=%d\n", (int)vq_id, valid);
 	return 0;
 }
 
@@ -240,15 +244,24 @@ void tx_application_define(void *first_unused_memory)
 			 pointer, DEMO_STACK_SIZE, 1, 1, TX_NO_TIME_SLICE, TX_AUTO_START);
 	IS_TX_ERROR(ret);
 
-	/* Create RPMsg task */
-	ret = tx_byte_allocate(&byte_pool_0, (VOID **)&pointer, DEMO_STACK_SIZE * 4, TX_NO_WAIT);
+	/* Create RPMsg task with much larger stack for I2C operations (32KB) */
+	ret = tx_byte_allocate(&byte_pool_0, (VOID **)&pointer, DEMO_STACK_SIZE * 16, TX_NO_WAIT);
 	IS_TX_ERROR(ret);
 
 	ret = tx_thread_create(&rpmsg_thread, "rpmsg thread", prvRpmsgTask, 0,
-			 pointer, DEMO_STACK_SIZE * 4, 5, 5, TX_NO_TIME_SLICE, TX_AUTO_START);
+			 pointer, DEMO_STACK_SIZE * 16, 5, 5, TX_NO_TIME_SLICE, TX_AUTO_START);
 	IS_TX_ERROR(ret);
 	
 	printf("RPMsg task created\n");
+	
+	/* Initialize SSD1306 early in main thread (safer, larger stack) */
+	printf("[RTOS] Early SSD1306 initialization...\n");
+	ret = ssd1306_rtos_init(1, 64, 128);  /* I2C1, 64 lines, 128 columns */
+	if (ret == 0) {
+		printf("[RTOS] SSD1306 initialized successfully\n");
+	} else {
+		printf("[RTOS] SSD1306 init failed: %d\n", ret);
+	}
 	
 	/* Create LED blink task for heartbeat */
 	ret = tx_byte_allocate(&byte_pool_0, (VOID **)&pointer, DEMO_STACK_SIZE, TX_NO_WAIT);
@@ -344,12 +357,16 @@ void prvCmdQuRunTask(ULONG thread_input)
 			char text[128];
 		} string_data_t;
 		
+		/* ⭐ CRITICAL: Copy data from shared memory IMMEDIATELY before it gets overwritten */
+		string_data_t local_data;
 		string_data_t* str_data = (string_data_t*)rtos_cmdq.param_ptr;
-		printf("[SSD1306] Write string at (%d,%d): %s\n", 
-		       str_data->x, str_data->y, str_data->text);
+		memcpy(&local_data, str_data, sizeof(string_data_t));
 		
-		ssd1306_rtos_set_cursor(str_data->x, str_data->y);
-		uint8_t result = ssd1306_rtos_write_string(str_data->font_size, str_data->text);
+		printf("[SSD1306] Write string at (%d,%d): %s\n", 
+		       local_data.x, local_data.y, local_data.text);
+		
+		ssd1306_rtos_set_cursor(local_data.x, local_data.y);
+		uint8_t result = ssd1306_rtos_write_string(local_data.font_size, local_data.text);
 		
 		rtos_cmdq.param_ptr = result;
 		rtos_cmdq.resv.valid.rtos_valid = 1;
@@ -365,13 +382,15 @@ void prvCmdQuRunTask(ULONG thread_input)
 		goto send_label;
 	
 	case CMD_SSD1306_UPDATE_DISPLAY: {
-		// param_ptr points to shared memory with display data
+		/* ⭐ CRITICAL: Copy entire display data (1024 + 8 bytes) from shared memory */
+		static ssd1306_shared_data_t local_display_data;
 		ssd1306_shared_data_t* display_data = (ssd1306_shared_data_t*)rtos_cmdq.param_ptr;
+		memcpy(&local_display_data, display_data, sizeof(ssd1306_shared_data_t));
 		
 		printf("[SSD1306] Update display: %d faces, FPS=%.1f\n",
-		       (unsigned int)display_data->face_count, display_data->fps);
+		       (unsigned int)local_display_data.face_count, local_display_data.fps);
 		
-		uint8_t result = ssd1306_rtos_update_display(display_data);
+		uint8_t result = ssd1306_rtos_update_display(&local_display_data);
 		
 		rtos_cmdq.param_ptr = result;
 		rtos_cmdq.resv.valid.rtos_valid = 1;
@@ -466,9 +485,9 @@ void prvRpmsgTask(ULONG thread_input)
 {
 	(void)thread_input;
 	
-	struct rpmsg_lite_instance *rpmsg_inst;
-	struct rpmsg_lite_endpoint *rpmsg_ept;
-	rpmsg_queue_handle queue;
+	/* Use global handles instead of local variables to prevent stack corruption */
+	struct rpmsg_lite_instance *rpmsg_inst;  /* Local temp for initialization */
+	
 	/* Use static buffers instead of stack allocation to prevent overflow */
 	char *rx_buffer = g_rx_buffer;
 	char *tx_buffer = g_tx_buffer;
@@ -507,117 +526,289 @@ void prvRpmsgTask(ULONG thread_input)
 		return;
 	}
 	
-	printf("[RTOS] ✅ RPMsg-Lite initialized (static mode)\n");
-	printf("[RTOS]   Instance: %p\n", rpmsg_inst);
-	printf("[RTOS]   TVQ: %p\n", rpmsg_inst->tvq);
-	printf("[RTOS]   RVQ: %p\n", rpmsg_inst->rvq);
-	
 	g_rpmsg_inst = rpmsg_inst;
+	
+	printf("[RTOS] RPMsg-Lite initialized (static mode)\n");
+	printf("[RTOS]   Instance: %p\n", g_rpmsg_inst);
+	printf("[RTOS]   TVQ: %p\n", g_rpmsg_inst->tvq);
+	printf("[RTOS]   RVQ: %p\n", g_rpmsg_inst->rvq);
+	printf("[RTOS]   LOCK: %p\n", g_rpmsg_inst->lock);
+	printf("[RTOS]   lock_static_ctxt addr: %p\n", &g_rpmsg_inst->lock_static_ctxt);
 	
 	if (g_early_kick_received) {
 		printf("[RTOS] Processing early kick received before init\n");
-		if (rpmsg_inst->link_state == 0) {
-			rpmsg_inst->link_state = 1;
+		if (g_rpmsg_inst->link_state == 0) {
+			g_rpmsg_inst->link_state = 1;
 			printf("[RTOS] Link UP (from early kick)\n");
 		}
 		g_early_kick_received = 0;
 	}
 	
 	printf("[RTOS] Waiting for Linux VirtIO ready (timeout 30s)...\n");
-	uint32_t link_up = rpmsg_lite_wait_for_link_up(rpmsg_inst, 30000);
+	uint32_t link_up = rpmsg_lite_wait_for_link_up(g_rpmsg_inst, 30000);
 	if (!link_up) {
 		printf("[RTOS] ERROR: Timeout waiting for link up\n");
 		printf("[RTOS] Hint: Check if Linux remoteproc loaded the firmware\n");
-		rpmsg_lite_deinit(rpmsg_inst);
+		rpmsg_lite_deinit(g_rpmsg_inst);
 		g_rpmsg_inst = NULL;
 		return;
 	}
-	printf("[RTOS] ✅ Link is UP!\n");
+	printf("[RTOS] Link is UP!\n");
 	
 	printf("[RTOS] Creating queue (static)...\n");
-	queue = rpmsg_queue_create(rpmsg_inst, g_queue_storage, &g_queue_ctxt);
-	if (!queue || queue == RL_NULL) {
+	g_rpmsg_queue = rpmsg_queue_create(g_rpmsg_inst, g_queue_storage, &g_queue_ctxt);
+	if (!g_rpmsg_queue || g_rpmsg_queue == RL_NULL) {
 		printf("[RTOS] ERROR: Failed to create queue\n");
-		rpmsg_lite_deinit(rpmsg_inst);
+		rpmsg_lite_deinit(g_rpmsg_inst);
 		g_rpmsg_inst = NULL;
 		return;
 	}
-	printf("[RTOS] ✅ Queue created: %p\n", queue);
+	printf("[RTOS] Queue created: %p\n", g_rpmsg_queue);
 	
 	printf("[RTOS] Creating endpoint (addr=%d, static)...\n", RPMSG_LOCAL_EPT_ADDR);
-	rpmsg_ept = rpmsg_lite_create_ept(
-		rpmsg_inst,
+	g_rpmsg_ept = rpmsg_lite_create_ept(
+		g_rpmsg_inst,
 		RPMSG_LOCAL_EPT_ADDR,
 		rpmsg_queue_rx_cb,
-		queue,
+		g_rpmsg_queue,
 		&g_ept_ctxt
 	);
-	if (!rpmsg_ept || rpmsg_ept == RL_NULL) {
+	if (!g_rpmsg_ept || g_rpmsg_ept == RL_NULL) {
 		printf("[RTOS] ERROR: Failed to create endpoint\n");
-		rpmsg_queue_destroy(rpmsg_inst, queue);
-		rpmsg_lite_deinit(rpmsg_inst);
+		rpmsg_queue_destroy(g_rpmsg_inst, g_rpmsg_queue);
+		rpmsg_lite_deinit(g_rpmsg_inst);
 		g_rpmsg_inst = NULL;
 		return;
 	}
-	printf("[RTOS] ✅ Endpoint created: addr=%d\n", rpmsg_ept->addr);
+	printf("[RTOS] Endpoint created: addr=%d\n", g_rpmsg_ept->addr);
 	
 	/* Announce service to Linux */
 	printf("[RTOS] Announcing service: %s\n", RPMSG_NS_SERVICE_NAME);
-	ret = rpmsg_ns_announce(rpmsg_inst, rpmsg_ept, 
+	ret = rpmsg_ns_announce(g_rpmsg_inst, g_rpmsg_ept, 
 	                       RPMSG_NS_SERVICE_NAME, RL_NS_CREATE);
 	if (ret != RL_SUCCESS) {
-		printf("[RTOS] ⚠️  WARNING: Name service announce failed (ret=%d)\n", ret);
+		printf("[RTOS] WARNING: Name service announce failed (ret=%d)\n", ret);
 		printf("[RTOS] Continuing anyway - Linux might find us via probing\n");
 	} else {
-		printf("[RTOS] ✅ Service announced successfully\n");
+		printf("[RTOS] Service announced successfully\n");
 	}
 	
 	printf("\n");
 	printf("============================================\n");
-	printf("[RTOS] RPMsg Ready - Waiting for messages\n");
+	printf("[RTOS] RPMsg Ready - SSD1306 Command Handler\n");
 	printf("============================================\n\n");
 	
-	/* 主循環 - 使用無限等待，避免超時問題 */
+	/* Static frame buffer for accumulating chunks */
+	static uint8_t accumulated_fb[1024];
+	static uint16_t fb_received_mask = 0;  /* Track which chunks received */
+	
+	/* Reset message counters */
+	msg_sent = 0;
+	msg_received = 0;
+	loop_count = 0;
+	
+	/* Main loop - handle SSD1306 commands */
 	while (1) {
 		loop_count++;
 		
-		/* 
-		 * 接收消息 - 使用無限等待 (RL_BLOCK)
-		 * 這樣可以確保收到消息才繼續
-		 */
-		ret = rpmsg_queue_recv(rpmsg_inst, queue, &remote_addr,
-		                      rx_buffer, sizeof(g_rx_buffer) - 1, &rx_len, 
-		                      RL_BLOCK);  /* 無限等待 */
+		/* Clear rx_buffer before receiving to avoid stale data */
+		memset(rx_buffer, 0, sizeof(g_rx_buffer));
 		
-		if (ret == RL_SUCCESS) {
-			rx_buffer[rx_len] = '\0';
-			msg_received++;
-			printf("[RTOS] RX[%d]: %s\n", msg_received, rx_buffer);
-			
-			/* 發送回應 */
-			snprintf(tx_buffer, sizeof(g_tx_buffer),
-			        "RTOS echo: %s", rx_buffer);
-			
-			/* 確保 link_state 為 1，否則 send 會返回 RL_NOT_READY (-5007) */
-			if (rpmsg_inst->link_state != 1) {
-				rpmsg_inst->link_state = 1;
-			}
-			
-			ret = rpmsg_lite_send(rpmsg_inst, rpmsg_ept, remote_addr,
-			                     tx_buffer, strlen(tx_buffer) + 1, 
-			                     RL_BLOCK);
-			
-			if (ret == RL_SUCCESS) {
-				msg_sent++;
-				printf("[RTOS] TX[%d]: %s\n", msg_sent, tx_buffer);
-			} else {
-				printf("[RTOS] TX failed: %d\n", ret);
-			}
-		} else {
-			printf("[RTOS] RX failed: %d\n", ret);
+		/* Print VirtQueue status periodically */
+		if (loop_count % 50 == 1 && loop_count > 1) {
+			struct virtqueue *rvq = g_rpmsg_inst->rvq;
+			printf("[RTOS] Waiting for message... (loop=%d, vq_available_idx=%d, avail->idx=%d)\n",
+			       loop_count, rvq->vq_available_idx, rvq->vq_ring.avail->idx);
 		}
-	}
+		
+		/* Receive message - with timeout for status updates */
+		ret = rpmsg_queue_recv(g_rpmsg_inst, g_rpmsg_queue, &remote_addr,
+		                      rx_buffer, sizeof(g_rx_buffer) - 1, &rx_len, 
+		                      1000);  /* 1 second timeout */
+		
+		if (ret != RL_SUCCESS) {
+			if (ret == RL_ERR_NO_BUFF) {
+				/* Timeout - just continue waiting */
+				continue;
+			}
+			printf("[RTOS] RX failed: ret=%d, loop=%d, queue=%p\n", ret, loop_count, g_rpmsg_queue);
+			printf("[RTOS] g_rpmsg_inst=%p, g_rpmsg_inst->link_state=%d\n", 
+			       g_rpmsg_inst, g_rpmsg_inst ? g_rpmsg_inst->link_state : -1);
+			/* Don't sleep on error - might be a transient issue */
+			continue;
+		}
+		
+		msg_received++;
+		
+		/* Check minimum message size (4 byte header) */
+		if (rx_len < 4) {
+			continue;
+		}
+		
+		/* Parse header: cmd(1) + reserved(1) + length(2) */
+		uint8_t cmd = (uint8_t)rx_buffer[0];
+		uint16_t payload_len = (uint8_t)rx_buffer[2] | ((uint8_t)rx_buffer[3] << 8);
+		uint8_t *payload = (uint8_t *)&rx_buffer[4];
+		
+		/* Minimal logging */
+		printf("[RTOS] RX: cmd=0x%02x\n", cmd);
+		
+		uint8_t result = 0;
+		
+		switch (cmd) {
+		case 0x01:  /* SSD1306_CMD_INIT */
+			printf("[RTOS] INIT: skip\n");
+			result = 0;
+			break;
+			
+		case 0x02:  /* SSD1306_CMD_DEINIT */
+			printf("[RTOS] DEINIT\n");
+			result = ssd1306_rtos_deinit();
+			break;
+			
+		case 0x03:  /* SSD1306_CMD_CLEAR */
+			printf("[RTOS] CLEAR: start\n");
+			
+			/* SKIP all RPMsg-Lite functions - they hang! */
+			printf("[RTOS] CLEAR: calling ssd1306_rtos_clear_screen...\n");
+			ssd1306_rtos_clear_screen();
+			printf("[RTOS] CLEAR: done\n");
+			
+			/* DON'T free buffer - causes hang */
+			/* DON'T send response - causes hang */
+			/* Just continue and hope Linux sends more messages */
+			printf("[RTOS] CLEAR: SKIP free & response, continue\n");
+			continue;
+			
+		case 0x04:  /* SSD1306_CMD_SET_CURSOR */
+			if (payload_len >= 2) {
+				uint8_t x = payload[0];
+				uint8_t y = payload[1];
+				printf("[RTOS] SET_CURSOR: (%d,%d)\n", x, y);
+				result = ssd1306_rtos_set_cursor(x, y);
+			} else {
+				result = 1;
+			}
+			break;
+			
+		case 0x05:  /* SSD1306_CMD_WRITE_STRING */
+			if (payload_len >= 4) {
+				uint8_t font_size = payload[0];
+				uint8_t x = payload[1];
+				uint8_t y = payload[2];
+				char *text = (char *)&payload[3];
+				text[payload_len - 3 - 1] = '\0';  /* Ensure null terminated */
+				printf("[RTOS] WRITE: \"%s\" at (%d,%d)\n", text, x, y);
+				ssd1306_rtos_set_cursor(x, y);
+				result = ssd1306_rtos_write_string(font_size, text);
+			} else {
+				result = 1;
+			}
+			break;
+			
+		case 0x06:  /* SSD1306_CMD_DISPLAY_ONOFF */
+			if (payload_len >= 1) {
+				uint8_t onoff = payload[0];
+				printf("[RTOS] DISPLAY: %s\n", onoff ? "ON" : "OFF");
+				result = ssd1306_rtos_display_onoff(onoff);
+			} else {
+				result = 1;
+			}
+			break;
+			
+		case 0x07: {  /* SSD1306_CMD_UPDATE_FB - frame buffer chunk */
+			if (payload_len >= 4) {
+				uint16_t offset = payload[0] | (payload[1] << 8);
+				uint16_t chunk_len = payload[2] | (payload[3] << 8);
+				
+				if (offset + chunk_len <= 1024 && chunk_len <= 256) {
+					memcpy(&accumulated_fb[offset], &payload[4], chunk_len);
+					
+					/* Mark which chunk received (256 byte chunks at 0,256,512,768) */
+					int chunk_idx = offset / 256;
+					fb_received_mask |= (1 << chunk_idx);
+					
+					printf("[RTOS] FB chunk: offset=%d len=%d mask=0x%x\n", 
+					       offset, chunk_len, fb_received_mask);
+					result = 0;
+				} else {
+					printf("[RTOS] FB chunk INVALID: offset=%d len=%d\n", offset, chunk_len);
+					result = 1;
+				}
+			} else {
+				result = 1;
+			}
+			break;
+		}
+			
+		case 0x08: {  /* SSD1306_CMD_FLUSH_FB - flush accumulated buffer */
+			printf("[RTOS] FLUSH_FB: mask=0x%x\n", fb_received_mask);
+			
+			if (fb_received_mask == 0x0F) {  /* All 4 chunks received */
+				/* Extract metadata: face_count(4) + fps(4) */
+				uint32_t face_count = 0;
+				float fps = 0.0f;
+				if (payload_len >= 8) {
+					memcpy(&face_count, payload, 4);
+					memcpy(&fps, &payload[4], 4);
+				}
+				
+				/* Send quick response BEFORE slow I2C transfer */
+				tx_buffer[0] = 0;  /* Success */
+				ret = rpmsg_lite_send(g_rpmsg_inst, g_rpmsg_ept, remote_addr,
+				                     tx_buffer, 1, 
+				                     RL_DONT_BLOCK);
+				if (ret == RL_SUCCESS) {
+					msg_sent++;
+					printf("[RTOS] FLUSH_FB: response sent\n");
+				}
+				
+				/* Now do the slow I2C transfer */
+				ssd1306_shared_data_t display_data;
+				memcpy(display_data.frame_buffer, accumulated_fb, 1024);
+				display_data.face_count = face_count;
+				display_data.fps = fps;
+				
+				printf("[RTOS] FLUSH_FB: updating display...\n");
+				result = ssd1306_rtos_update_display(&display_data);
+				
+				/* Reset for next frame */
+				fb_received_mask = 0;
+				
+				/* Release RX buffer */
+				ret = rpmsg_queue_nocopy_free(g_rpmsg_inst, rx_buffer);
+				
+				/* Already sent response, skip the normal response below */
+				continue;
+			} else {
+				printf("[RTOS] FLUSH_FB: WARNING incomplete mask=0x%x\n", 
+				       fb_received_mask);
+				result = 1;
+			}
+			break;
+		}
+			
+		default:
+			result = 0xFF;
+			break;
+		}
+		
+		/* SKIP sending response - rpmsg_lite_send() hangs! */
+		printf("[RTOS] Response ready: result=0x%02x (NOT SENT - testing)\n", result);
+		
+		/* Release the RX buffer after processing (CRITICAL!) */
+		ret = rpmsg_queue_nocopy_free(g_rpmsg_inst, rx_buffer);
+		if (ret != RL_SUCCESS) {
+			printf("[RTOS] ERR: Free failed\n");
+		} else {
+			printf("[RTOS] RX buffer freed OK\n");
+		}
+	}  /* End of while(1) loop */
+	
+	/* Should never reach here */
+	printf("[RTOS] ERROR: Exited main loop unexpectedly!\n");
 }
+
 
 /* ============================================
  * LED Blink Task

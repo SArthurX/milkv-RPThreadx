@@ -3,3 +3,5 @@ install/
 *.bin
 
 .vscode/
+
+rpmsg_example
